@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contrôle d'Authenticité - Services-Citoyens</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="max-w-lg w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl text-center space-y-4">
+        <h1 class="font-bold text-xl text-white">Contrôle Officiel de Document</h1>
+        <p id="statusMessage" class="text-xs text-slate-400">Vérification en cours dans la base de données...</p>
+
+        <div id="resultCard" class="space-y-2 bg-slate-950 p-4 rounded-xl border border-slate-800 hidden text-left text-xs space-y-2">
+            <p><strong>N° de Suivi :</strong> <span id="valRef" class="text-blue-400 font-mono"></span></p>
+            <hr class="border-slate-800">
+            <p><strong>Nom :</strong> <span id="valNom" class="text-white font-semibold"></span></p>
+            <p><strong>Post-nom :</strong> <span id="valPostnom" class="text-white font-semibold"></span></p>
+            <p><strong>Prénom :</strong> <span id="valPrenom" class="text-white font-semibold"></span></p>
+            <hr class="border-slate-800">
+            <p><strong>Secteur :</strong> <span id="valSecteur" class="text-slate-300"></span></p>
+            <p><strong>Province de Provenance :</strong> <span id="valProvince" class="text-slate-300"></span></p>
+            <p><strong>Adresse Résidentielle :</strong> <span id="valAdresse" class="text-slate-300"></span></p>
+            <hr class="border-slate-800">
+            <p><strong>Type de Document :</strong> <span id="valType" class="text-emerald-400 font-bold"></span></p>
+            <div id="valDetailsContainer" class="bg-slate-900 p-2 rounded-lg text-slate-300"></div>
+            <p><strong>Statut :</strong> <span id="valStatut" class="text-emerald-400 font-bold">Authentique & Validé</span></p>
+        </div>
+    </div>
+
+  <script>
+ const SUPABASE_URL = 'https://iofrjpaadsmdxsngdllc.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_Tx1YT7durqPkFh1qnLPujQ_s4zT2L5q';
+
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // 1. Récupérer la référence dans l'URL (ex: ?ref=REF-1794315271165)
+document.addEventListener('DOMContentLoaded', async () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const reference = urlParams.get('ref');
+
+    const statusMessage = document.getElementById('statusMessage');
+    const resultCard = document.getElementById('resultCard');
+
+    if (!reference) {
+        if (statusMessage) statusMessage.textContent = "Aucune référence de document trouvée.";
+        return;
+    }
+
+    try {
+        const { data, error } = await supabaseClient
+            .from('documents')
+            .select('*')
+            .eq('reference', reference)
+            .maybeSingle();
+
+        if (error) throw error;
+
+        if (data) {
+            console.log("DONNÉES REÇUES DE SUPABASE :", data);
+
+            if (statusMessage) statusMessage.style.display = 'none';
+            if (resultCard) resultCard.classList.remove('hidden');
+
+            // Fonction intelligente pour trouver la clé peu importe les majuscules/minuscules
+            const getVal = (obj, possibleKeys) => {
+                for (const key of possibleKeys) {
+                    for (const prop in obj) {
+                        if (prop.toLowerCase() === key.toLowerCase()) {
+                            return obj[prop];
+                        }
+                    }
+                }
+                return '';
+            };
+
+            // Injection sécurisée dans tes balises HTML
+            document.getElementById('valRef').textContent = getVal(data, ['reference', 'ref']) || reference;
+            document.getElementById('valNom').textContent = getVal(data, ['nom']);
+            document.getElementById('valPostnom').textContent = getVal(data, ['postnom', 'post_nom']);
+            document.getElementById('valPrenom').textContent = getVal(data, ['prenom']);
+            document.getElementById('valSecteur').textContent = getVal(data, ['secteur']);
+            document.getElementById('valProvince').textContent = getVal(data, ['province']);
+            document.getElementById('valAdresse').textContent = getVal(data, ['adresseresidentielle', 'adresse_residentielle', 'adresse']);
+            document.getElementById('valType').textContent = getVal(data, ['type_document', 'typeDocument']);
+
+            // Gestion du Statut
+            const statutEl = document.getElementById('valstatut');
+            if (statutEl) {
+                statutEl.textContent = 'Authentique & Valide (OFFICIAL_VALID)';
+                statutEl.className = "text-emerald-400 font-bold";
+            }
+        } else {
+            if (statusMessage) statusMessage.textContent = "Document introuvable dans la base de données.";
+        }
+    } catch (err) {
+        console.error("Erreur de récupération :", err);
+        if (statusMessage) {
+            statusMessage.textContent = "Erreur technique lors de la vérification.";
+        }
+    }
+});
+
+</script>
+</body>
+</html>

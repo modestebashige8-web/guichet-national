@@ -1,0 +1,119 @@
+-- ============================================================
+-- SCHÉMA DE BASE DE DONNÉES : PORTAIL E-GOUVERNEMENT / ÉTAT CIVIL
+-- ============================================================
+
+-- Extensions nécessaires pour la sécurité et la génération d'UUID
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- ------------------------------------------------------------
+-- 1. TABLE : ROLES ET UTILISATEURS (Citoyens, Agents, Admin)
+-- ------------------------------------------------------------
+CREATE TYPE user_role AS ENUM ('CITOYEN', 'AGENT_MAIRIE', 'AGENT_CONTROLE', 'ADMIN_FINANCE');
+
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    nin VARCHAR(20) UNIQUE NOT NULL, -- Numéro d'Identification National
+    nom VARCHAR(100) NOT NULL,
+    prenom VARCHAR(100) NOT NULL,
+    email VARCHAR(150) UNIQUE NOT NULL,
+    telephone VARCHAR(20) NOT NULL,
+    mot_de_passe_hash TEXT NOT NULL,
+    role user_role DEFAULT 'CITOYEN',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ------------------------------------------------------------
+-- 2. TABLE : REGISTRE DE L'ÉTAT CIVIL (Actes Numérisés)
+-- ------------------------------------------------------------
+CREATE TYPE type_acte AS ENUM ('NAISSANCE', 'MARIAGE', 'DECES');
+CREATE TYPE statut_acte AS ENUM ('EN_ATTENTE_PAIEMENT', 'VALIDE', 'REJETE', 'SUSPENDU');
+
+CREATE TABLE actes_etat_civil (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    numero_registre VARCHAR(50) UNIQUE NOT NULL, -- Ex: REG-2026-89421
+    type_document type_acte NOT NULL,
+    
+    -- Informations du Titulaire
+    nom VARCHAR(100) NOT NULL,
+    prenom VARCHAR(100) NOT NULL,
+    sexe VARCHAR(10) CHECK (sexe IN ('MASCULIN', 'FEMININ')),
+    date_naissance DATE NOT NULL,
+    lieu_naissance VARCHAR(100) NOT NULL,
+    commune VARCHAR(100) NOT NULL,
+    
+    -- Filiation
+    nom_pere VARCHAR(150) NOT NULL,
+    nom_mere VARCHAR(150) NOT NULL,
+    
+    -- Sécurité & Empreinte Cryptographique
+    hash_signature TEXT NOT NULL, -- Signature numérique SHA256
+    statut statut_acte DEFAULT 'EN_ATTENTE_PAIEMENT',
+    
+    -- Métadonnées
+    citoyen_id UUID REFERENCES users(id) ON DELETE RESTRICT,
+    officier_id UUID REFERENCES users(id), -- Agent de mairie qui a approuvé
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ------------------------------------------------------------
+-- 3. TABLE : TRANSACTIONS ET COLLECTE DES TAXES
+-- ------------------------------------------------------------
+CREATE TYPE mode_paiement AS ENUM ('MOBILE_MONEY', 'CARTE_BANCAIRE', 'BANQUE_PARTENAIRE');
+CREATE TYPE statut_paiement AS ENUM ('EN_ATTENTE', 'REUSSI', 'ECHOUE', 'REMBOURSE');
+
+CREATE TABLE transactions_taxes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    reference_transaction VARCHAR(100) UNIQUE NOT NULL, -- Réf Mobile Money ou Banque
+    acte_id UUID REFERENCES actes_etat_civil(id) ON DELETE CASCADE,
+    citoyen_id UUID REFERENCES users(id),
+    
+    montant DECIMAL(12, 2) NOT NULL,
+    devise VARCHAR(5) DEFAULT 'CDF',
+    mode mode_paiement NOT NULL,
+    operateur VARCHAR(50), -- Ex: MPESA, ORANGE_MONEY, AIRTEL_MONEY, VISA
+    num_telephone_payeur VARCHAR(20),
+    
+    statut statut_paiement DEFAULT 'EN_ATTENTE',
+    date_paiement TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ------------------------------------------------------------
+-- 4. TABLE : JOURNAUX D'AUDIT ANTI-CORRUPTION (AUDIT LOGS)
+-- ------------------------------------------------------------
+-- Cette table est IMPOSSIBLE à modifier ou supprimer par un agent (Lecture seule/Append-only)
+CREATE TABLE audit_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id),
+    action VARCHAR(100) NOT NULL, -- Ex: 'CREATION_ACTE', 'VERIFICATION_QR', 'VALIDATION_PAIEMENT'
+    details TEXT,
+    adresse_ip VARCHAR(45),
+    user_agent TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    -- FUNCTION : Générer automatiquement un Numéro de Registre Unique et un Hash SHA256
+CREATE OR REPLACE FUNCTION generate_acte_security()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Generer le numéro unique de registre (Ex: REG-2026-X8F9)
+    NEW.numero_registre := 'REG-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-' || UPPER(SUBSTRING(MD5(RANDOM()::TEXT) FROM 1 FOR 6));
+    
+    -- Calculer la signature numérique incrackable (Hash)
+    NEW.hash_signature := ENCODE(
+        DIGEST(
+            NEW.numero_registre || NEW.nom || NEW.prenom || NEW.date_naissance::TEXT || CURRENT_TIMESTAMP::TEXT, 
+            'sha256'
+        ), 
+        'hex'
+    );
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- TRIGGER : S'exécute automatiquement avant chaque insertion d'acte
+CREATE TRIGGER trigger_acte_security
+BEFORE INSERT ON actes_etat_civil
+FOR EACH ROW
+EXECUTE FUNCTION generate_acte_security();
+);
