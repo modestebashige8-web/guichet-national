@@ -128,7 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const referenceId = 'REF-' + Date.now();
 
             // 2. Récupération des valeurs du formulaire
-            const docType = document.getElementById('typeDocInput')?.value || 'Attestation Officielle';
+            const docType = document.getElementById('typeDocInput')?.value || 'Acte de Naissance';
             const nom = document.getElementById('nomInput')?.value || '';
             const postnom = document.getElementById('postnomInput')?.value || '';
             const prenom = document.getElementById('prenomInput')?.value || '';
